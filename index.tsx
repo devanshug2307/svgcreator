@@ -129,7 +129,6 @@ async function generateVectorStylePrompt(value: string) {
     if (response.candidates && response.candidates[0]?.content?.parts) {
       for (const part of response.candidates[0].content.parts) {
         if (part.inlineData) {
-          // Handle the part.inlineData.data as unknown type
           const data = part.inlineData.data;
           const mimeType = part.inlineData.mimeType;
           if (data && typeof data === "string" && mimeType) {
@@ -144,18 +143,83 @@ async function generateVectorStylePrompt(value: string) {
       throw new Error("No image was generated");
     }
 
-    // Create SVG wrapping the PNG
-    const svgContent =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">' +
-      '<image href="' +
-      imageData +
-      '" width="1024" height="1024"/>' +
-      "</svg>";
+    // Convert base64 to Blob
+    const base64Response = await fetch(imageData);
+    const blob = await base64Response.blob();
+
+    // Create FormData for the file upload
+    const formData = new FormData();
+    formData.append("file", blob, "image.png");
+
+    // Send to our backend for vectorization
+    const vectorResponse = await fetch("http://localhost:8000/vectorize", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!vectorResponse.ok) {
+      const errorText = await vectorResponse.text();
+      throw new Error(`Failed to vectorize image: ${errorText}`);
+    }
+
+    let svgContent;
+    try {
+      const data = await vectorResponse.json();
+      svgContent = data.svg;
+
+      // Validate the SVG content
+      if (!svgContent || typeof svgContent !== "string") {
+        throw new Error("Invalid SVG content received from server");
+      }
+
+      // Fix SVG if it doesn't have proper XML declaration
+      if (
+        !svgContent.trim().startsWith("<?xml") &&
+        !svgContent.trim().startsWith("<svg")
+      ) {
+        throw new Error("Invalid SVG format received from server");
+      }
+
+      // Ensure SVG has viewBox if missing but has width/height
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
+      const svgElement = svgDoc.documentElement;
+
+      if (svgElement.tagName === "parsererror") {
+        throw new Error("SVG parsing error: Invalid SVG content");
+      }
+
+      if (
+        !svgElement.hasAttribute("viewBox") &&
+        svgElement.hasAttribute("width") &&
+        svgElement.hasAttribute("height")
+      ) {
+        const width = svgElement.getAttribute("width") || "200";
+        const height = svgElement.getAttribute("height") || "200";
+        svgElement.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+        // Serialize back to string
+        const serializer = new XMLSerializer();
+        svgContent = serializer.serializeToString(svgDoc);
+      }
+    } catch (error) {
+      console.error("Error processing SVG:", error);
+      throw new Error(
+        `Failed to process SVG: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
 
     return { imageData, svgContent };
   } catch (error) {
     console.error("Error generating vector illustration:", error);
-    updateStatus(`Error generating vector illustration: ${parseError(error)}`);
+    updateStatus(
+      `Error generating vector illustration: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
     throw error;
   }
 }
@@ -175,15 +239,43 @@ function createOutputCard(
   frameNumber.textContent = `${index + 1}`;
   outputCard.appendChild(frameNumber);
 
-  // Create and add image
+  // Create container that will hold both the raster image and SVG
+  const imageContainer = document.createElement("div");
+  imageContainer.className = "image-container";
+  imageContainer.style.position = "relative";
+  imageContainer.style.width = "100%";
+  imageContainer.style.height = "200px";
+  imageContainer.style.cursor = "pointer";
+  imageContainer.onclick = () => {
+    openSvgEditor(svgContent, index);
+  };
+
+  // Create and add image (as a background, hidden by default)
   const img = new Image();
   img.src = imageData;
   img.className = "result-image";
-  img.onclick = () => {
-    openSvgEditor(svgContent, index);
-  };
-  img.style.cursor = "pointer";
-  outputCard.appendChild(img);
+  img.style.display = "block";
+  img.style.width = "100%";
+  img.style.height = "100%";
+  img.style.objectFit = "contain";
+
+  // Create SVG display (visible on top)
+  const svgDisplay = document.createElement("div");
+  svgDisplay.className = "svg-display";
+  svgDisplay.style.position = "absolute";
+  svgDisplay.style.top = "0";
+  svgDisplay.style.left = "0";
+  svgDisplay.style.width = "100%";
+  svgDisplay.style.height = "100%";
+  svgDisplay.style.display = "flex";
+  svgDisplay.style.justifyContent = "center";
+  svgDisplay.style.alignItems = "center";
+  svgDisplay.innerHTML = svgContent;
+
+  // Add both to the container
+  imageContainer.appendChild(img);
+  imageContainer.appendChild(svgDisplay);
+  outputCard.appendChild(imageContainer);
 
   // Create download buttons container
   const downloadContainer = document.createElement("div");
@@ -248,7 +340,16 @@ function openSvgEditor(svgContent: string, index: number) {
   // Create preview area
   const previewArea = document.createElement("div");
   previewArea.className = "svg-editor-preview";
-  previewArea.innerHTML = svgContent;
+
+  // Add a container for the SVG with proper sizing
+  const svgContainer = document.createElement("div");
+  svgContainer.style.width = "100%";
+  svgContainer.style.height = "100%";
+  svgContainer.style.display = "flex";
+  svgContainer.style.justifyContent = "center";
+  svgContainer.style.alignItems = "center";
+  svgContainer.innerHTML = svgContent;
+  previewArea.appendChild(svgContainer);
 
   // Create control panel
   const controlPanel = document.createElement("div");
@@ -819,29 +920,25 @@ function initSvgEditorControls(
     const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
     const svgElement = svgDoc.documentElement;
 
+    // Ensure SVG has proper viewBox if missing
+    if (
+      !svgElement.hasAttribute("viewBox") &&
+      svgElement.hasAttribute("width") &&
+      svgElement.hasAttribute("height")
+    ) {
+      const width = svgElement.getAttribute("width") || "200";
+      const height = svgElement.getAttribute("height") || "200";
+      svgElement.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    }
+
+    // Always set preserveAspectRatio to display properly
+    svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
     // Apply color replacements
     replaceColors(svgDoc, originalColors);
 
     // Get or create a transform group to hold the image
     let transformGroup = svgElement.querySelector("g.transform-group");
-    const imageElement = svgElement.querySelector("image");
-
-    if (!transformGroup && imageElement) {
-      // Create transform group
-      transformGroup = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "g"
-      );
-      transformGroup.classList.add("transform-group");
-
-      // Move the image into the transform group
-      const parent = imageElement.parentNode;
-      if (parent) {
-        parent.removeChild(imageElement);
-        transformGroup.appendChild(imageElement);
-        svgElement.appendChild(transformGroup);
-      }
-    }
 
     // Apply size
     if (iconSizeSlider) {
@@ -849,27 +946,24 @@ function initSvgEditorControls(
       svgElement.setAttribute("width", size);
       svgElement.setAttribute("height", size);
 
-      // Update viewBox to maintain aspect ratio
-      svgElement.setAttribute("viewBox", `0 0 ${size} ${size}`);
-
-      if (imageElement) {
-        imageElement.setAttribute("width", size);
-        imageElement.setAttribute("height", size);
+      // Update viewBox to maintain aspect ratio if it doesn't exist
+      if (!svgElement.hasAttribute("viewBox")) {
+        svgElement.setAttribute("viewBox", `0 0 ${size} ${size}`);
       }
     }
 
     // Apply padding
-    if (paddingSlider && imageElement) {
+    if (paddingSlider && svgElement.querySelector("image")) {
       const padding = parseInt(paddingSlider.value);
       const size = parseInt(iconSizeSlider?.value || "200");
       const paddingValue = (padding / 100) * size;
 
-      if (imageElement) {
+      if (svgElement.querySelector("image")) {
         const newSize = size - paddingValue * 2;
-        imageElement.setAttribute("x", `${paddingValue}`);
-        imageElement.setAttribute("y", `${paddingValue}`);
-        imageElement.setAttribute("width", `${newSize}`);
-        imageElement.setAttribute("height", `${newSize}`);
+        svgElement.querySelector("image")?.setAttribute("x", `${paddingValue}`);
+        svgElement.querySelector("image")?.setAttribute("y", `${paddingValue}`);
+        svgElement.querySelector("image")?.setAttribute("width", `${newSize}`);
+        svgElement.querySelector("image")?.setAttribute("height", `${newSize}`);
       }
     }
 
@@ -1048,7 +1142,10 @@ function initSvgEditorControls(
     currentSvg = serializer.serializeToString(svgDoc);
 
     // Update the preview
-    previewArea.innerHTML = currentSvg;
+    const svgContainer = previewArea.querySelector("div");
+    if (svgContainer) {
+      svgContainer.innerHTML = currentSvg;
+    }
   }
 
   // Function to replace colors in the SVG
