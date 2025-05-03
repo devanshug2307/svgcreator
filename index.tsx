@@ -34,13 +34,12 @@ const tabContents = document.querySelectorAll(".tab-content");
 function parseError(error: string) {
   const regex = /{"error":(.*)}/gm;
   const m = regex.exec(error);
-  try {
+  if (m && m[1]) {
     const e = m[1];
     const err = JSON.parse(e);
     return err.message;
-  } catch (e) {
-    return error;
   }
+  return error;
 }
 
 async function createGifFromPngs(
@@ -149,19 +148,25 @@ async function generateVectorStylePrompt(value: string) {
 
     // Create FormData for the file upload
     const formData = new FormData();
-    formData.append("file", blob, "image.png");
+    formData.append("file", blob, "image.png"); // Sending as form data
 
-    // Send to our backend for vectorization
-    const vectorResponse = await fetch("http://localhost:8000/vectorize", {
+    // Send to our NEW backend endpoint for vectorization
+    const vectorResponse = await fetch("/api/vectorize", {
+      // Changed URL
       method: "POST",
       body: formData,
     });
 
     if (!vectorResponse.ok) {
       const errorText = await vectorResponse.text();
-      throw new Error(`Failed to vectorize image: ${errorText}`);
+      throw new Error(
+        `Failed to vectorize image (server error): ${
+          errorText || vectorResponse.statusText
+        }`
+      );
     }
 
+    // Expecting JSON response with SVG content
     let svgContent;
     try {
       const data = await vectorResponse.json();
@@ -172,21 +177,21 @@ async function generateVectorStylePrompt(value: string) {
         throw new Error("Invalid SVG content received from server");
       }
 
-      // Fix SVG if it doesn't have proper XML declaration
+      // --- Optional: Keep SVG validation/fixing logic (client-side) ---
+      // Fix SVG if it doesn't have proper XML declaration or viewBox (similar to previous logic)
       if (
         !svgContent.trim().startsWith("<?xml") &&
         !svgContent.trim().startsWith("<svg")
       ) {
-        throw new Error("Invalid SVG format received from server");
+        console.warn("SVG missing XML declaration or <svg> tag");
       }
 
-      // Ensure SVG has viewBox if missing but has width/height
       const parser = new DOMParser();
       const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
       const svgElement = svgDoc.documentElement;
 
       if (svgElement.tagName === "parsererror") {
-        throw new Error("SVG parsing error: Invalid SVG content");
+        throw new Error("SVG parsing error: Invalid SVG content from server");
       }
 
       if (
@@ -197,21 +202,23 @@ async function generateVectorStylePrompt(value: string) {
         const width = svgElement.getAttribute("width") || "200";
         const height = svgElement.getAttribute("height") || "200";
         svgElement.setAttribute("viewBox", `0 0 ${width} ${height}`);
-        svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+        svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet"); // Good practice
 
         // Serialize back to string
         const serializer = new XMLSerializer();
         svgContent = serializer.serializeToString(svgDoc);
       }
+      // --- End: Optional SVG validation/fixing logic ---
     } catch (error) {
-      console.error("Error processing SVG:", error);
+      console.error("Error processing response from /api/vectorize:", error);
       throw new Error(
-        `Failed to process SVG: ${
+        `Failed to process SVG response: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
     }
 
+    // Return the original image data and the SVG content from the API
     return { imageData, svgContent };
   } catch (error) {
     console.error("Error generating vector illustration:", error);
@@ -1248,9 +1255,9 @@ async function run(value: string) {
     updateStatus("Done!");
     return true;
   } catch (error) {
-    const msg = parseError(error);
-    console.error("Error generating vector illustrations:", error);
-    updateStatus(`Error generating vector illustrations: ${msg}`);
+    console.error("Generation failed:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    updateStatus(`Generation failed: ${errorMessage}`);
     return false;
   } finally {
     if (generateButton) {
