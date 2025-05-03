@@ -1,5 +1,5 @@
 {
-  "name": "magical-gif-maker",
+  "name": "svgcreator",
   "compatibility_date": "2025-05-03",
   "assets": {
     "directory": "./dist"
