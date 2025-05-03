@@ -17,7 +17,7 @@ function apiPlugin(): PluginOption {
     configureServer(server) {
       console.log("Configuring API endpoint /api/vectorize...");
 
-      server.middlewares.use("/api/vectorize", async (req, res, next) => {
+      server.middlewares.use("/api/vectorize", async (req, res) => {
         console.log(`[${req.method}] /api/vectorize request received`);
 
         if (req.method !== "POST") {
@@ -39,7 +39,7 @@ function apiPlugin(): PluginOption {
 
         try {
           console.log("Parsing form data...");
-          const [fields, files] = await form.parse(req);
+          const [, files] = await form.parse(req);
           console.log("Form data parsed.");
 
           const imageFileArray = files.file;

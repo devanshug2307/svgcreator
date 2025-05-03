@@ -3,12 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { GoogleGenAI, Modality } from "@google/genai";
-import { applyPalette, GIFEncoder, quantize } from "gifenc";
-// We'll use a simpler approach to avoid TypeScript errors
-// Instead of using svgo directly, we'll just embed the image in an SVG
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const fps = 4;
 const outputCount = 1; // Number of outputs to generate
 
 // DOM elements
@@ -25,65 +21,10 @@ const resultContainer = document.getElementById(
 const statusDisplay = document.getElementById(
   "status-display"
 ) as HTMLDivElement;
-const generationContainer = document.querySelector(
-  ".generation-container"
-) as HTMLDivElement;
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
 
-function parseError(error: string) {
-  const regex = /{"error":(.*)}/gm;
-  const m = regex.exec(error);
-  if (m && m[1]) {
-    const e = m[1];
-    const err = JSON.parse(e);
-    return err.message;
-  }
-  return error;
-}
-
-async function createGifFromPngs(
-  imageUrls: string[],
-  targetWidth = 1024,
-  targetHeight = 1024
-) {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Failed to create canvas context");
-  }
-  const gif = GIFEncoder();
-  const fpsInterval = 1 / fps;
-  const delay = fpsInterval * 1000;
-
-  for (const url of imageUrls) {
-    const img = new Image();
-    img.src = url;
-    await new Promise((resolve) => {
-      img.onload = resolve;
-    });
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    ctx.fillStyle = "#ffffff";
-    ctx.clearRect(0, 0, targetWidth, targetHeight);
-    ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-    const data = ctx.getImageData(0, 0, targetWidth, targetHeight).data;
-    const format = "rgb444";
-    const palette = quantize(data, 256, { format });
-    const index = applyPalette(data, palette, format);
-    gif.writeFrame(index, targetWidth, targetHeight, { palette, delay });
-  }
-
-  gif.finish();
-  const buffer = gif.bytesView();
-  const blob = new Blob([buffer], { type: "image/gif" });
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  img.src = url;
-  return img;
-}
-
-function updateStatus(message: string, progress = 0) {
+function updateStatus(message: string) {
   if (statusDisplay) {
     statusDisplay.textContent = message;
   }
