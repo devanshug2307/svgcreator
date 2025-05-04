@@ -273,6 +273,10 @@ function createOutputCard(
 
 // Add SVG editor functions
 function openSvgEditor(svgContent: string, index: number) {
+  // Quantize SVG and get palette
+  const { quantizedSvgContent, paletteColors } =
+    extractColorsFromSvg(svgContent);
+
   // Create editor modal
   const editorModal = document.createElement("div");
   editorModal.className = "svg-editor-modal";
@@ -296,16 +300,15 @@ function openSvgEditor(svgContent: string, index: number) {
   svgContainer.style.display = "flex";
   svgContainer.style.justifyContent = "center";
   svgContainer.style.alignItems = "center";
-  svgContainer.innerHTML = svgContent;
+  svgContainer.innerHTML = quantizedSvgContent;
   previewArea.appendChild(svgContainer);
 
   // Create control panel
   const controlPanel = document.createElement("div");
   controlPanel.className = "svg-editor-controls";
 
-  // Extract colors from SVG before rendering controls
-  const svgColors = extractColorsFromSvg(svgContent);
-  const colorPalette = createColorPalette(svgColors);
+  // Use quantized palette for color controls
+  const colorPalette = createColorPalette(paletteColors);
 
   // Add controls as shown in the screenshot
   controlPanel.innerHTML = `
@@ -449,11 +452,128 @@ function openSvgEditor(svgContent: string, index: number) {
   document.body.appendChild(editorModal);
 
   // Initialize the editor controls
-  initSvgEditorControls(svgContent, previewArea, index);
+  initSvgEditorControls(quantizedSvgContent, previewArea, index);
 }
 
-// Function to extract colors from SVG
-function extractColorsFromSvg(svgContent: string): string[] {
+// Function to convert hex color to RGB array
+function hexToRgb(hex: string): [number, number, number] | null {
+  // Remove # if present
+  hex = hex.replace(/^#/, "");
+  if (hex.length === 3) {
+    hex = hex
+      .split("")
+      .map((x) => x + x)
+      .join("");
+  }
+  if (hex.length !== 6) return null;
+  const num = parseInt(hex, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+// Function to convert RGB array to hex color
+function rgbToHex(rgb: [number, number, number]): string {
+  return (
+    "#" +
+    rgb
+      .map((x) => {
+        const hex = x.toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+      })
+      .join("")
+  );
+}
+
+// Calculate Euclidean distance between two RGB colors
+function colorDistance(
+  a: [number, number, number],
+  b: [number, number, number]
+): number {
+  return Math.sqrt(
+    Math.pow(a[0] - b[0], 2) +
+      Math.pow(a[1] - b[1], 2) +
+      Math.pow(a[2] - b[2], 2)
+  );
+}
+
+// K-means clustering for color quantization
+function kMeansQuantize(colors: string[], k: number, maxIters = 10): string[] {
+  if (colors.length <= k) return colors;
+  const rgbColors = colors.map(hexToRgb).filter(Boolean) as [
+    number,
+    number,
+    number
+  ][];
+  // Randomly initialize cluster centers
+  let centers = rgbColors.slice(0, k);
+  for (let iter = 0; iter < maxIters; iter++) {
+    // Assign each color to the nearest center
+    const clusters: [number, number, number][][] = Array.from(
+      { length: k },
+      () => []
+    );
+    rgbColors.forEach((color) => {
+      let minDist = Infinity;
+      let bestIdx = 0;
+      centers.forEach((center, idx) => {
+        const dist = colorDistance(color, center);
+        if (dist < minDist) {
+          minDist = dist;
+          bestIdx = idx;
+        }
+      });
+      clusters[bestIdx].push(color);
+    });
+    // Update centers to mean of assigned colors
+    let changed = false;
+    for (let i = 0; i < k; i++) {
+      if (clusters[i].length === 0) continue;
+      const mean: [number, number, number] = [0, 0, 0];
+      clusters[i].forEach((c) => {
+        mean[0] += c[0];
+        mean[1] += c[1];
+        mean[2] += c[2];
+      });
+      mean[0] = Math.round(mean[0] / clusters[i].length);
+      mean[1] = Math.round(mean[1] / clusters[i].length);
+      mean[2] = Math.round(mean[2] / clusters[i].length);
+      if (colorDistance(mean, centers[i]) > 1) changed = true;
+      centers[i] = mean;
+    }
+    if (!changed) break;
+  }
+  // Convert centers back to hex
+  return centers.map(rgbToHex);
+}
+
+// Map each color to its nearest cluster
+function mapColorsToClusters(
+  colors: string[],
+  clusters: string[]
+): { [key: string]: string } {
+  const rgbClusters = clusters.map(hexToRgb) as [number, number, number][];
+  const colorMap: { [key: string]: string } = {};
+  for (const color of colors) {
+    const rgb = hexToRgb(color);
+    if (!rgb) continue;
+    let minDist = Infinity;
+    let bestCluster = clusters[0];
+    rgbClusters.forEach((center, i) => {
+      const dist = colorDistance(rgb, center);
+      if (dist < minDist) {
+        minDist = dist;
+        bestCluster = clusters[i];
+      }
+    });
+    colorMap[color] = bestCluster;
+  }
+  return colorMap;
+}
+
+// Function to extract and quantize colors from SVG
+function extractColorsFromSvg(svgContent: string): {
+  quantizedSvgContent: string;
+  paletteColors: string[];
+} {
   const colors = new Set<string>();
   const parser = new DOMParser();
   const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
@@ -463,8 +583,6 @@ function extractColorsFromSvg(svgContent: string): string[] {
   elements.forEach((element) => {
     const fill = element.getAttribute("fill");
     const stroke = element.getAttribute("stroke");
-
-    // Add valid color values (exclude "none", transparent, etc.)
     if (
       fill &&
       fill !== "none" &&
@@ -485,15 +603,38 @@ function extractColorsFromSvg(svgContent: string): string[] {
 
   // If no colors found, add some default colors
   if (colors.size === 0) {
-    // Basic default colors
-    colors.add("#68A240"); // Green
-    colors.add("#333336"); // Dark gray
-    colors.add("#D5D9CF"); // Light gray
-    colors.add("#FFD632"); // Yellow
-    colors.add("#D8A128"); // Orange
+    colors.add("#68A240");
+    colors.add("#333336");
+    colors.add("#D5D9CF");
+    colors.add("#FFD632");
+    colors.add("#D8A128");
   }
 
-  return Array.from(colors);
+  const colorArray = Array.from(colors);
+  const k = 10; // Palette size
+  // Use k-means for quantization
+  const clusters = kMeansQuantize(colorArray, k);
+  // Map all colors to their nearest cluster
+  const colorMap = mapColorsToClusters(colorArray, clusters);
+
+  // Replace all fill and stroke colors in the SVG with their cluster color
+  elements.forEach((element) => {
+    const fill = element.getAttribute("fill");
+    if (fill && colorMap[fill]) {
+      element.setAttribute("fill", colorMap[fill]);
+    }
+    const stroke = element.getAttribute("stroke");
+    if (stroke && colorMap[stroke]) {
+      element.setAttribute("stroke", colorMap[stroke]);
+    }
+  });
+
+  // Serialize the quantized SVG back to a string
+  const serializer = new XMLSerializer();
+  const quantizedSvgContent = serializer.serializeToString(svgDoc);
+
+  // Return both the quantized SVG and the palette colors
+  return { quantizedSvgContent, paletteColors: clusters };
 }
 
 // Function to create color palette HTML
@@ -579,6 +720,17 @@ function initSvgEditorControls(
   let currentFlipD1 = false;
   let currentFlipD2 = false;
 
+  // Store the current palette colors for replacement
+  let currentPalette: string[] = [];
+  try {
+    // Try to extract the palette from the quantized SVG
+    const { paletteColors } = extractColorsFromSvg(svgContent);
+    currentPalette = paletteColors;
+  } catch (e) {
+    // fallback: extract from DOM
+    currentPalette = [];
+  }
+
   // Add event listeners for controls
   if (iconSizeSlider && iconSizeValue) {
     iconSizeSlider.oninput = () => {
@@ -647,8 +799,27 @@ function initSvgEditorControls(
           originalColors[oldColor] = newColor;
         }
 
-        // Apply to SVG
-        updateSvgPreview();
+        // Apply to SVG: replace ALL SVG elements using this palette color
+        // Parse the current SVG
+        const parser = new DOMParser();
+        const svgDoc = parser.parseFromString(currentSvg, "image/svg+xml");
+        const svgElement = svgDoc.documentElement;
+        const elements = svgElement.querySelectorAll("[fill], [stroke]");
+        elements.forEach((element) => {
+          if (element.getAttribute("fill") === oldColor) {
+            element.setAttribute("fill", newColor);
+          }
+          if (element.getAttribute("stroke") === oldColor) {
+            element.setAttribute("stroke", newColor);
+          }
+        });
+        // Serialize and update preview
+        const serializer = new XMLSerializer();
+        currentSvg = serializer.serializeToString(svgDoc);
+        const svgContainer = previewArea.querySelector("div");
+        if (svgContainer) {
+          svgContainer.innerHTML = currentSvg;
+        }
       }
     });
   });
