@@ -21,11 +21,19 @@
     </script>
     <div class="app-container">
       <header>
-        <h1>Magical GIF Maker</h1>
-        <p>
-          Turn your ideas into beautiful vector illustrations with multiple
-          outputs
-        </p>
+        <div class="header-content">
+          <div class="header-left">
+            <h1>Magical GIF Maker</h1>
+            <p>
+              Turn your ideas into beautiful vector illustrations with multiple
+              outputs
+            </p>
+          </div>
+          <a href="/gallery.html" class="view-gallery-button">
+            <i class="fas fa-images"></i>
+            View Gallery
+          </a>
+        </div>
       </header>
 
       <div class="input-container">
@@ -45,21 +53,20 @@
       </div>
 
       <div class="generation-container">
-        <div class="tabs">
-          <button class="tab-button" data-tab="frames">Frames</button>
-          <button class="tab-button active" data-tab="output">Output</button>
+        <div class="frames-container" id="frames-container">
+          <!-- Frames will appear here -->
         </div>
 
-        <div class="tab-content" id="frames-content">
-          <div class="frames-container" id="frames-container">
-            <!-- Frames will appear here -->
-          </div>
+        <div class="result-container" id="result-container">
+          <!-- Vector illustrations will appear here -->
         </div>
 
-        <div class="tab-content active" id="output-content">
-          <div class="result-container" id="result-container">
-            <!-- Vector illustrations will appear here -->
-          </div>
+        <div
+          class="gallery-container"
+          id="gallery-content"
+          style="display: none"
+        >
+          <!-- Gallery will be rendered here -->
         </div>
       </div>
 

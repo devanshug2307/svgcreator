@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { GoogleGenAI, Modality } from "@google/genai";
+import ReactDOM from "react-dom/client";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const outputCount = 1; // Number of outputs to generate
@@ -21,8 +22,17 @@ const resultContainer = document.getElementById(
 const statusDisplay = document.getElementById(
   "status-display"
 ) as HTMLDivElement;
+const viewGalleryButton = document.getElementById(
+  "view-gallery"
+) as HTMLButtonElement;
+const galleryContainer = document.getElementById(
+  "gallery-content"
+) as HTMLDivElement;
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
+
+// Import the Gallery component
+import Gallery from "./src/pages/Gallery";
 
 function updateStatus(message: string) {
   if (statusDisplay) {
@@ -47,6 +57,32 @@ function switchTab(targetTab: string) {
   });
   if (targetTab === "output" && resultContainer) {
     resultContainer.style.display = "flex";
+  }
+  if (targetTab === "gallery") {
+    // Render the Gallery component
+    const galleryContainer = document.getElementById("gallery-content");
+    if (galleryContainer) {
+      const root = ReactDOM.createRoot(galleryContainer);
+      root.render(<Gallery />);
+    }
+  }
+}
+
+function toggleGallery() {
+  if (galleryContainer.style.display === "none") {
+    galleryContainer.style.display = "block";
+    resultContainer.style.display = "none";
+    framesContainer.style.display = "none";
+    viewGalleryButton.classList.add("active");
+
+    // Render the Gallery component
+    const root = ReactDOM.createRoot(galleryContainer);
+    root.render(<Gallery />);
+  } else {
+    galleryContainer.style.display = "none";
+    resultContainer.style.display = "flex";
+    framesContainer.style.display = "block";
+    viewGalleryButton.classList.remove("active");
   }
 }
 
@@ -1391,6 +1427,11 @@ function main() {
       }
     });
   }
+
+  if (viewGalleryButton) {
+    viewGalleryButton.addEventListener("click", toggleGallery);
+  }
+
   updateStatus("Ready!");
 
   // Tab switching
